@@ -1,0 +1,18 @@
+# Weekly Activity Report — Python Dependencies
+#
+# These are the only external packages required. All other code is bundled
+# in the lib/ folder and requires no additional installation.
+#
+# Installed automatically by setup.sh — you do not need to run this manually.
+
+# Google Calendar API (authentication + event fetching)
+google-api-python-client==2.197.0
+google-auth-httplib2==0.4.0
+google-auth-oauthlib==1.4.0
+
+# Snowflake connector (for Snowhouse — call transcripts and use case data)
+# secure-local-storage caches the SSO token so you only authenticate once
+snowflake-connector-python[secure-local-storage]==4.6.0
+
+# Date/time parsing utilities
+python-dateutil==2.9.0.post0

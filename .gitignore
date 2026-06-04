@@ -1,0 +1,40 @@
+# =============================================================================
+# Weekly Activity Report — .gitignore
+# =============================================================================
+
+# --- Credentials & secrets ---------------------------------------------------
+.secrets/
+*.env
+*.env.*
+!*.env.example
+!.secrets.example
+google_credentials.json
+google_token.json
+*_credentials.json
+*_token.json
+service_account*.json
+
+# --- Generated report output -------------------------------------------------
+output/
+
+# --- Python virtual environment ----------------------------------------------
+.venv/
+venv/
+env/
+
+# --- Python cache files ------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# --- macOS system files ------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# --- Logs --------------------------------------------------------------------
+*.log
