@@ -405,7 +405,12 @@ def main() -> int:
     if not se_name:
         local = user_email.split("@")[0]           # "john.doe"
         se_name = " ".join(p.capitalize() for p in local.split("."))  # "John Doe"
-        print(f"  Using derived SE name: {se_name!r}  (set SNOWFLAKE_SE_NAME in .secrets/snowhouse.env to override)")
+        print(f"  Using derived SE name: {se_name!r}")
+        print(f"  If you see no Gong summaries, your Gong display name may differ.")
+        print(f"  Check a Gong recording to see your exact name, then add to .secrets/snowhouse.env:")
+        print(f"    SNOWFLAKE_SE_NAME=Your Gong Name")
+    else:
+        print(f"  Using SE name from SNOWFLAKE_SE_NAME: {se_name!r}")
 
     secrets_dir = Path(args.secrets_dir)
     out_dir = Path(args.output_dir)
@@ -563,6 +568,15 @@ def main() -> int:
     out_path.write_text(md, encoding="utf-8")
     print(f"Wrote: {out_path}")
     print(f"  {len(items)} meetings, {len({it.customer for it in items if it.customer != '(unknown customer)'})} customers")
+
+    gong_count = sum(1 for it in items if it.notes_source in ("Gong", "Zoom") or it.summary)
+    if gong_count == 0 and items:
+        print()
+        print("  NOTE: No Gong/Zoom summaries found. This usually means the SE name used")
+        print(f"  to query Gong ({se_name!r}) does not match your Gong display name.")
+        print("  Open a recent Gong recording, check how your name appears in the")
+        print("  participants list, then add to .secrets/snowhouse.env:")
+        print("    SNOWFLAKE_SE_NAME=Your Exact Gong Name")
     return 0
 
 
