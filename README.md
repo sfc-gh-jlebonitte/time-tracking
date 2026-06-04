@@ -22,7 +22,7 @@ first, then follow the steps below.
 | What | Where to get it |
 |---|---|
 | Python 3.11 or newer | https://www.python.org/downloads/ |
-| Google Cloud SDK (`gcloud`) | https://cloud.google.com/sdk/docs/install-sdk |
+| Google Cloud SDK (`gcloud`) | https://cloud.google.com/sdk/docs/install-sdk (or let `setup.sh` install it — see Step 3) |
 | Your Snowflake account details | See Step 2 below |
 
 ---
@@ -142,6 +142,12 @@ SNOWHOUSE_SNOWFLAKE_ROLE=
 ## Step 3 — Set up Google Calendar access
 
 This is handled automatically when you run `bash setup.sh` in Step 4.
+
+> **You do not need a Google Cloud account, project, or any credentials from
+> the Google Cloud Console.** This tool uses your personal Google login
+> (the same `@snowflake.com` account you use for Gmail and Google Calendar)
+> via the `gcloud` command-line tool. No project setup, no API keys, no
+> billing — just a one-time browser sign-in.
 
 During setup you will be asked two questions:
 
@@ -354,6 +360,14 @@ Terminal window and run `bash setup.sh` again.
 → The file `.secrets/snowhouse.env` does not exist. Run:
 `cp .secrets.example .secrets/snowhouse.env`
 Then open it and fill in your details.
+
+**"I don't have access to create credentials / projects in Google Cloud Console"**
+→ You don't need to. This tool never asks you to create a Google Cloud project
+or visit the Google Cloud Console. It uses **Application Default Credentials**
+— a simple personal login via the `gcloud` command-line tool that is already
+bundled with the Google Cloud SDK. Just run `bash setup.sh` and follow the
+browser prompt to sign in with your `@snowflake.com` Google account. That's
+all that is required.
 
 **"Google Calendar credentials not found"**
 → The tool uses Application Default Credentials. Run:
