@@ -141,30 +141,33 @@ SNOWHOUSE_SNOWFLAKE_ROLE=
 
 ## Step 3 — Set up Google Calendar access
 
-This is handled automatically when you run `bash setup.sh` in Step 4.
+There are two ways to authorise Google Calendar access. **Option A is
+recommended** — it works for everyone regardless of whether you have a Google
+Cloud project.
 
-> **You do not need a Google Cloud account, project, or any credentials from
-> the Google Cloud Console.** This tool uses your personal Google login
-> (the same `@snowflake.com` account you use for Gmail and Google Calendar)
-> via the `gcloud` command-line tool. No project setup, no API keys, no
-> billing — just a one-time browser sign-in.
+### Option A — Shared credentials file (recommended)
 
-During setup you will be asked two questions:
+Ask the person who shared this tool with you for the `google_credentials.json`
+file and place it here:
 
-**If Google Cloud SDK is not installed:**
-> "Would you like to download and install it now? [Y/n]"
+```
+time tracking/.secrets/google_credentials.json
+```
 
-Type `Y` and press Enter. The installer will download (~100 MB) and set it up
-for you automatically — no manual steps required.
+That's it. No GCP project, no console access, no setup commands needed.
+The first time you run `bash run.sh` a browser window will open asking you to
+sign in with your `@snowflake.com` Google account and click **Allow**. After
+that the token is cached and no further sign-ins are required.
 
-**To authorise your Google Calendar:**
-> "Ready to open the browser? [Y/n]"
+### Option B — Application Default Credentials (requires GCP project access)
 
-Type `Y` and press Enter. A browser window will open — sign in with your
-**Snowflake Google account** (`@snowflake.com`) and click **Allow**.
+If you have editor access to a Google Cloud project that has the Calendar API
+enabled, `bash setup.sh` will walk you through this path automatically. It
+installs the `gcloud` CLI and runs a one-time browser sign-in.
 
-Both of these only happen once. On every subsequent run, setup skips these
-steps automatically.
+> **If you hit a "quota project" error with Option B** — this means
+> Snowflake's Google Workspace policy requires Calendar API calls to be billed
+> against a GCP project you own. Switch to Option A instead.
 
 ---
 
@@ -362,17 +365,22 @@ Terminal window and run `bash setup.sh` again.
 Then open it and fill in your details.
 
 **"I don't have access to create credentials / projects in Google Cloud Console"**
-→ You don't need to. This tool never asks you to create a Google Cloud project
-or visit the Google Cloud Console. It uses **Application Default Credentials**
-— a simple personal login via the `gcloud` command-line tool that is already
-bundled with the Google Cloud SDK. Just run `bash setup.sh` and follow the
-browser prompt to sign in with your `@snowflake.com` Google account. That's
-all that is required.
+→ Use **Option A** from Step 3: get the `google_credentials.json` file from
+the person who shared this tool and place it in `.secrets/google_credentials.json`.
+You do not need a GCP project or any Console access.
+
+**"quota project" error / "Request is prohibited by organization's policy"**
+→ Snowflake's Google Workspace policy requires Calendar API calls to be billed
+against a GCP project. If you hit this error with the `gcloud` ADC approach,
+switch to **Option A** from Step 3 instead: place `google_credentials.json` in
+`.secrets/google_credentials.json` and the quota project requirement goes away
+entirely — the tool uses its own OAuth client credentials instead of your ADC.
 
 **"Google Calendar credentials not found"**
-→ The tool uses Application Default Credentials. Run:
+→ Either place `google_credentials.json` in `.secrets/google_credentials.json`
+(Option A from Step 3), or run:
 `gcloud auth application-default login`
-and sign in with your Snowflake Google account.
+and sign in with your Snowflake Google account (Option B).
 
 **Report runs but shows no Gong summaries**
 → Check that `SNOWFLAKE_SE_NAME` in your `.secrets/snowhouse.env` matches

@@ -150,23 +150,37 @@ else
     fi
 fi
 
-# ---------- 3. Google Calendar authorisation (ADC) ---------------------------
+# ---------- 3. Google Calendar authorisation -----------------------------------
 echo ""
 echo "Step 3 of 5: Checking Google Calendar authorisation..."
 
-if "$GCLOUD_CMD" auth application-default print-access-token > /dev/null 2>&1; then
-    ok "Google Calendar access is already authorised."
+GOOGLE_CREDS="$SCRIPT_DIR/.secrets/google_credentials.json"
+GOOGLE_TOKEN="$SCRIPT_DIR/.secrets/google_token.json"
+
+if [ -f "$GOOGLE_TOKEN" ]; then
+    ok "Google Calendar access is already authorised  (token cached at .secrets/google_token.json)"
+elif [ -f "$GOOGLE_CREDS" ]; then
+    ok "Google credentials file found at .secrets/google_credentials.json"
+    info "A browser sign-in will open the first time you run  bash run.sh"
+elif "$GCLOUD_CMD" auth application-default print-access-token > /dev/null 2>&1; then
+    ok "Google Calendar access is authorised via Application Default Credentials."
 else
     warn "Google Calendar access has not been set up yet."
     echo ""
-    info "A browser window will open asking you to sign in to your Google"
-    info "account and allow this tool to read your calendar."
-    info ""
-    info "Sign in with your Snowflake Google account (@snowflake.com)."
+    info "There are two ways to authorise Google Calendar access:"
     echo ""
-    printf "     Ready to open the browser? [Y/n] "
+    info "  Option A (recommended if you lack a GCP project):"
+    info "    Copy the shared  google_credentials.json  file into:"
+    info "      .secrets/google_credentials.json"
+    info "    A browser sign-in will happen the first time you run the report."
+    echo ""
+    info "  Option B (requires a personal GCP project with Calendar API enabled):"
+    info "    This will open a browser asking you to sign in with your"
+    info "    Snowflake Google account (@snowflake.com)."
+    echo ""
+    printf "     Use Option B (Application Default Credentials)? [y/N] "
     read -r answer
-    answer="${answer:-Y}"
+    answer="${answer:-N}"
 
     if [[ "$answer" =~ ^[Yy]$ ]]; then
         echo ""
@@ -176,10 +190,10 @@ else
         ok "Google Calendar access authorised."
     else
         echo ""
-        err "Setup cancelled. Google Calendar authorisation is required."
-        info "Run this script again when you are ready."
+        warn "Skipping Google Calendar authorisation."
+        info "Place  google_credentials.json  in the .secrets/ folder and re-run,"
+        info "or run this script again and choose Option B."
         echo ""
-        exit 1
     fi
 fi
 
