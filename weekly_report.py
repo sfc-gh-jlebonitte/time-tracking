@@ -31,8 +31,10 @@ from lib.calendar_google import (
 )
 from lib.customer_attribution import CustomerAttributor, canonicalize_customer
 from lib.customer_meetings import CustomerMeetingHeuristics, is_customer_meeting
+from lib.domain_resolver import DomainResolver
 from lib.envfile import apply_env, load_env_file
 from lib.internal_calls import is_internal_call
+from lib.salesforce_accounts import fetch_all_se_accounts
 from lib.salesforce_use_cases import fetch_salesforce_use_cases_for_opps
 
 HERE = Path(__file__).resolve().parent
@@ -448,11 +450,13 @@ def main() -> int:
                     continue
                 snow_rows.append((dt, row))
 
+        all_se_accounts = fetch_all_se_accounts(con, se_name)
+
     snow_rows = _dedupe(snow_rows, tzinfo)
     rows_only = [r for _, r in snow_rows]
     preferred = CustomerAttributor.build_preferred_accounts(rows_only)
-    known = CustomerAttributor.build_known_accounts(rows_only)
-    attributor = CustomerAttributor(known, preferred_accounts=preferred)
+    known = CustomerAttributor.build_known_accounts(rows_only) | all_se_accounts
+    attributor = CustomerAttributor(known, preferred_accounts=preferred | all_se_accounts)
 
     items: list[MeetingItem] = []
     for dt, row in snow_rows:
@@ -522,6 +526,46 @@ def main() -> int:
             gcal_conference_url=m.conference_url,
             gcal_attendees=[a.email for a in m.attendees[:15]],
         ))
+
+    # ---- Domain-based attribution for unattributed meetings ----
+    for it in items:
+        if it.customer != "(unknown customer)":
+            continue
+        if not it.gcal_attendees:
+            continue
+        res = attributor.attribute_from_domains(it.gcal_attendees, internal_domains)
+        if res.customer and res.confidence >= 0.75:
+            it.customer = canonicalize_customer(res.customer, preferred_accounts=preferred) or "(unknown customer)"
+            it.customer_attribution = "Domain match"
+            it.is_internal = is_internal_call(
+                it.customer if it.customer != "(unknown customer)" else None, it.title
+            )
+
+    # ---- Web-lookup attribution for still-unattributed meetings ----
+    resolver = DomainResolver(cache_path=secrets_dir / "domain_cache.json")
+    for it in items:
+        if it.customer != "(unknown customer)":
+            continue
+        if not it.gcal_attendees:
+            continue
+        for email in it.gcal_attendees:
+            if "@" not in email:
+                continue
+            domain = email.split("@", 1)[1].lower()
+            if any(domain == d or domain.endswith("." + d) for d in internal_domains):
+                continue
+            company = resolver.resolve(domain)
+            if not company:
+                continue
+            res = attributor.attribute(title=company, context="")
+            if res.customer and res.confidence >= 0.70:
+                it.customer = canonicalize_customer(res.customer, preferred_accounts=preferred | all_se_accounts) or "(unknown customer)"
+                it.customer_attribution = "Domain lookup"
+                it.is_internal = is_internal_call(
+                    it.customer if it.customer != "(unknown customer)" else None, it.title
+                )
+                break
+    resolver.save_cache()
 
     # ---- Salesforce use cases ----
     opp_names: set[str] = {it.opp for it in items if it.opp}

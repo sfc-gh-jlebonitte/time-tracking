@@ -101,6 +101,52 @@ def _best_match_against(preferred_accounts: set[str], candidate: str) -> str | N
     return None
 
 
+def _domain_sld(domain: str) -> str:
+    """Extract second-level domain label: 'mail.jackhenry.com' -> 'jackhenry'."""
+    d = re.sub(r"^www\.", "", domain.lower())
+    parts = d.split(".")
+    return parts[-2] if len(parts) >= 2 else parts[0]
+
+
+def _match_domain_to_accounts(
+    preferred_accounts: set[str], domain: str
+) -> tuple[str, float] | None:
+    """
+    Match an email domain to a preferred account name.
+    Uses compact comparison (spaces removed) so 'jackhenry.com' matches 'Jack Henry'.
+    """
+    sld = _domain_sld(domain)
+    if not sld or len(sld) < 3:
+        return None
+
+    sld_compact = sld.replace("-", "").replace(".", "")
+
+    for acc in preferred_accounts:
+        acc_compact = _norm(acc).replace(" ", "")
+        if not acc_compact or len(acc_compact) < 3:
+            continue
+        if sld_compact == acc_compact:
+            return acc, 0.88
+        if len(sld_compact) >= 5 and (
+            sld_compact in acc_compact or acc_compact in sld_compact
+        ):
+            return acc, 0.82
+
+    # Hyphenated domain: try splitting as words
+    if "-" in sld:
+        candidate = " ".join(sld.split("-"))
+        m = _best_match_against(preferred_accounts, candidate)
+        if m:
+            return m, 0.80
+
+    # Plain SLD as a word
+    m = _best_match_against(preferred_accounts, sld)
+    if m:
+        return m, 0.75
+
+    return None
+
+
 def canonicalize_customer(name: str, *, preferred_accounts: set[str] | None = None) -> str:
     """
     Collapse known naming variants to a canonical customer name.
@@ -212,6 +258,41 @@ class CustomerAttributor:
                         continue
                     out.add(cleaned)
         return out
+
+    def attribute_from_domains(
+        self,
+        emails: list[str],
+        internal_domains: tuple[str, ...],
+    ) -> AttributionResult:
+        """Infer customer from attendee email domains, excluding internal domains."""
+        external_domains: set[str] = set()
+        for email in emails:
+            if "@" not in email:
+                continue
+            domain = email.split("@", 1)[1].lower()
+            if any(domain == d or domain.endswith("." + d) for d in internal_domains):
+                continue
+            external_domains.add(domain)
+
+        if not external_domains:
+            return AttributionResult(customer=None, confidence=0.0, reason="no-external-domains")
+
+        best_acc: str | None = None
+        best_conf: float = 0.0
+
+        for domain in external_domains:
+            result = _match_domain_to_accounts(self._preferred_accounts, domain)
+            if result and result[1] > best_conf:
+                best_acc, best_conf = result
+
+        if best_acc:
+            return AttributionResult(
+                customer=canonicalize_customer(best_acc, preferred_accounts=self._preferred_accounts),
+                confidence=best_conf,
+                reason="domain-match",
+            )
+
+        return AttributionResult(customer=None, confidence=0.0, reason="no-domain-match")
 
     def attribute(self, *, title: str, context: str | None = None) -> AttributionResult:
         t = (title or "").strip()
