@@ -119,6 +119,7 @@ class MeetingItem:
     opp: str | None = None
     opp_value: float | None = None
     sf_account_id: str | None = None
+    sf_activity_id: str | None = None
     sf_opp_id: str | None = None
     sf_use_case_id: str | None = None
     se_name: str | None = None
@@ -843,6 +844,7 @@ def main() -> int:
             is_internal=is_internal_call(customer if customer != "(unknown customer)" else None, title),
             opp=_maybe_str(row, "OPP_NAME"),
             sf_account_id=_maybe_str(row, "SF_ACCOUNT_ID"),
+            sf_activity_id=_maybe_str(row, "SF_ACTIVITY_ID"),
             sf_opp_id=_maybe_str(row, "SF_OPP_ID"),
             sf_use_case_id=_maybe_str(row, "SF_USE_CASE_ID"),
             se_name=_maybe_str(row, "SE_NAME"),
@@ -1057,6 +1059,7 @@ def main() -> int:
                 "customer": it.customer if it.customer != "(unknown customer)" else "",
                 "source": it.primary_source or ", ".join(sorted(it.sources)),
                 "sf_account_id": it.sf_account_id or "",
+                "sf_activity_id": it.sf_activity_id or "",
                 "opp": it.opp or "",
                 "sf_opp_id": it.sf_opp_id or "",
                 "sf_use_case_id": it.sf_use_case_id or "",
