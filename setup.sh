@@ -185,7 +185,7 @@ else
     if [[ "$answer" =~ ^[Yy]$ ]]; then
         echo ""
         "$GCLOUD_CMD" auth application-default login \
-            --scopes="https://www.googleapis.com/auth/calendar.readonly,https://www.googleapis.com/auth/cloud-platform"
+            --scopes="https://www.googleapis.com/auth/calendar.readonly,https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/cloud-platform"
         echo ""
         ok "Google Calendar access authorised."
     else

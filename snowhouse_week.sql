@@ -33,12 +33,18 @@ gong_calls AS (
 ),
 se_activities AS (
     SELECT
+        ACTIVITY_ID,
         ACTIVITY_DATE,
         ACTIVITY_DESCRIPTION,
         ACCOUNT_NAME,
+        ACCOUNT_ID,
         OPP_NAME,
+        OPP_ID,
+        USE_CASE_ID,
         IS_EXTERNAL,
-        MEETING_STATUS
+        MEETING_STATUS,
+        ACTIVITY_SE_NAME,
+        ACTIVITY_SE_HIERARCHY_EMAIL
     FROM SALES.SE_REPORTING.DIM_SE_ACTIVITY
     WHERE ACTIVITY_SE_NAME = %s
       AND ACTIVITY_TYPE    = 'Meeting'
@@ -77,17 +83,6 @@ all_meetings AS (
 
     SELECT NULL, ACTIVITY_DESCRIPTION, NULL, ACTIVITY_DATE::TIMESTAMP_NTZ, 'SE Activity'
     FROM se_unmatched
-),
-recording_urls AS (
-    SELECT
-        r.MEETING_ID,
-        MAX(r.RAW[0]:password::STRING) AS RECORDING_PASSWORD,
-        MAX(CASE WHEN f.value:file_type::STRING = 'TRANSCRIPT' THEN f.value:play_url::STRING END) AS TRANSCRIPT_URL,
-        MAX(CASE WHEN f.value:file_type::STRING = 'MP4'        THEN f.value:play_url::STRING END) AS VIDEO_URL
-    FROM IT.RAW_ZOOM_CUSTOM.ZOOM_MEETING_RECORDINGS_RAW r,
-        LATERAL FLATTEN(input => r.RAW[0]:recording_files) f
-    WHERE r.MEETING_ID IN (SELECT MEETING_ID FROM all_meetings WHERE MEETING_ID IS NOT NULL)
-    GROUP BY r.MEETING_ID
 )
 SELECT
     am.MEETING_ID,
@@ -96,27 +91,25 @@ SELECT
     am.MEETING_DATETIME,
     am.PRIMARY_SOURCE,
     a.ACCOUNT_NAME    AS CUSTOMER_ACCOUNT,
+    a.ACCOUNT_ID      AS SF_ACCOUNT_ID,
+    a.ACTIVITY_ID     AS SF_ACTIVITY_ID,
     a.OPP_NAME,
+    a.OPP_ID          AS SF_OPP_ID,
+    a.USE_CASE_ID     AS SF_USE_CASE_ID,
     a.IS_EXTERNAL,
-    COALESCE(s.SUMMARY_OVERVIEW, g.GONG_SUMMARY)    AS SUMMARY,
-    COALESCE(s.NEXT_STEPS,       g.GONG_NEXT_STEPS) AS NEXT_STEPS,
-    g.GONG_KEY_POINTS                               AS KEY_POINTS,
-    CASE
-        WHEN s.SUMMARY_OVERVIEW IS NOT NULL THEN 'Zoom'
-        WHEN g.GONG_SUMMARY     IS NOT NULL THEN 'Gong'
-        ELSE NULL
-    END                                             AS SUMMARY_SOURCE,
-    COALESCE(g.GONG_URL, ru.VIDEO_URL)              AS CALL_URL,
-    ru.TRANSCRIPT_URL,
-    ru.RECORDING_PASSWORD
+    a.ACTIVITY_SE_NAME              AS SE_NAME,
+    a.ACTIVITY_SE_HIERARCHY_EMAIL   AS SE_HIERARCHY_EMAIL,
+    g.GONG_SUMMARY                  AS SUMMARY,
+    g.GONG_NEXT_STEPS               AS NEXT_STEPS,
+    g.GONG_KEY_POINTS               AS KEY_POINTS,
+    CASE WHEN g.GONG_SUMMARY IS NOT NULL THEN 'Gong' ELSE NULL END AS SUMMARY_SOURCE,
+    g.GONG_URL                      AS CALL_URL,
+    NULL                            AS TRANSCRIPT_URL,
+    NULL                            AS RECORDING_PASSWORD
 FROM all_meetings am
 LEFT JOIN se_activities a
     ON am.MEETING_DATETIME::DATE = a.ACTIVITY_DATE
     AND CONTAINS(a.ACTIVITY_DESCRIPTION, SPLIT_PART(am.MEETING_TITLE, ' - ', 1))
-LEFT JOIN IT.ZOOM_TRANSCRIPT.ZOOM_MEETING_SUMMARY_VW s
-    ON am.MEETING_ID = s.ID
-LEFT JOIN recording_urls ru
-    ON am.MEETING_ID = ru.MEETING_ID
 LEFT JOIN gong_calls g
     ON am.MEETING_DATETIME::DATE = g.GONG_DATETIME::DATE
     AND ABS(DATEDIFF('minute', am.MEETING_DATETIME, g.GONG_DATETIME)) <= 20

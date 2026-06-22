@@ -22,6 +22,37 @@ _INTERNAL_CUSTOMERS_NORM = {
 _TITLE_SUBSTRINGS = [
     "weekly enablement",
     "weekly team meeting",
+    "1:1",
+    "touchbase",
+    "touch base",
+    "breathe",
+    "stretch",
+    "hiring sync",
+    "hiring interview",
+    "hiring manager",
+    "recruiting",
+    "interlock",
+    "internal collaboration",
+    "v-team",
+    "vteam",
+    "office hours",
+    "bi-weekly sync",
+    "biweekly sync",
+    "enablement",
+    "irresistible",
+    "stress management",
+    "feedback skills",
+    "industry principles",
+    "flight to",
+    "flight from",
+    "1 hour meeting",
+    "30 minute meeting",
+    "30 min meeting",
+]
+
+_TITLE_REGEXES = [
+    re.compile(r"^[a-z]+(?: [a-z]+)? [/&] [a-z]+(?: [a-z]+)? (?:sync|touchbase|touch base|weekly|bi.weekly|1:1)", re.I),
+    re.compile(r"\b(?:UA|AA|DL|WN|AS|B6|NK)\s*\d{3,4}\b", re.I),
 ]
 
 
@@ -33,9 +64,6 @@ def _norm(s: str) -> str:
 
 
 def is_internal_call(customer: str | None, title: str | None) -> bool:
-    """
-    Internal calls are shown in the timeline but should not be counted as customer calls.
-    """
     if customer:
         if _norm(customer) in _INTERNAL_CUSTOMERS_NORM:
             return True
@@ -43,6 +71,9 @@ def is_internal_call(customer: str | None, title: str | None) -> bool:
         t = (title or "").strip().lower()
         for sub in _TITLE_SUBSTRINGS:
             if sub in t:
+                return True
+        for pat in _TITLE_REGEXES:
+            if pat.search(title.strip()):
                 return True
     return False
 

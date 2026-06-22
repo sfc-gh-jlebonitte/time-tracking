@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 # =============================================================================
-# run.sh — Run the Weekly Activity Report
+# run.sh — Activity Tracking & Aggregation
 #
-# This script generates a Markdown report of last week's customer meetings,
-# enriched with call summaries and Salesforce use cases.
-#
-# Usage:
-#   bash run.sh                       # report for last Mon–Sun week
-#   bash run.sh --week 2025-01-06     # report for the week starting Jan 6 2025
-#
-# Output is saved to:  output/week_YYYY-MM-DD.md
+# Subcommands:
+#   (none)                  Weekly activity report (last Mon–Sun)
+#   --week 2026-06-15       Report for a specific week
+#   --gsheet                Also export a CSV alongside the markdown
+#   aggregate               Load all team CSVs from Drive → Snowflake
+#   backfill [--weeks N]    Back-fill CSV summaries from Gong takeaways
+#   summarize               Generate summaries from local transcript files
 # =============================================================================
 
 set -euo pipefail
@@ -66,13 +65,40 @@ if [ ! -f "$GCAL_CREDS" ]; then
     exit 1
 fi
 
-# ---------- Run the report ---------------------------------------------------
+# ---------- Dispatch subcommand --------------------------------------------------
 echo ""
-echo "  Generating weekly activity report..."
-echo ""
+SUBCMD="${1:-}"
 
-"$VENV_PYTHON" "$SCRIPT_DIR/weekly_report.py" "$@"
+if [ "$SUBCMD" = "aggregate" ]; then
+    echo "  Aggregating team activity CSVs from Google Drive → Snowflake..."
+    echo ""
+    shift
+    "$VENV_PYTHON" "$SCRIPT_DIR/aggregate_activities.py" "$@"
+    echo ""
+    ok "Done. Data loaded into TEMP.JLEBONITTE_EDA_ACTIVITY_TRACKING.SE_WEEKLY_ACTIVITIES"
 
-echo ""
-ok "Done. Check the output/ folder for your report."
+elif [ "$SUBCMD" = "backfill" ]; then
+    echo "  Back-filling CSV summaries from Gong takeaways..."
+    echo ""
+    shift
+    "$VENV_PYTHON" "$SCRIPT_DIR/lib/gong_backfill.py" "$@"
+    echo ""
+    ok "Done. Check output/ CSVs for new summaries."
+
+elif [ "$SUBCMD" = "summarize" ]; then
+    echo "  Generating meeting summaries from local transcript files..."
+    echo ""
+    shift
+    "$VENV_PYTHON" "$SCRIPT_DIR/lib/transcript_summaries.py" "$@"
+    echo ""
+    ok "Done. Check output/ CSVs for new summaries."
+
+else
+    echo "  Generating weekly activity report..."
+    echo ""
+    "$VENV_PYTHON" "$SCRIPT_DIR/weekly_report.py" "$@"
+    echo ""
+    ok "Done. Check the output/ folder for your report."
+fi
+
 echo ""
