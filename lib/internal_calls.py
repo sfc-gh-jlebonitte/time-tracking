@@ -43,10 +43,16 @@ _TITLE_SUBSTRINGS = [
     "stress management",
     "feedback skills",
     "industry principles",
+    "flight to",
+    "flight from",
+    "1 hour meeting",
+    "30 minute meeting",
+    "30 min meeting",
 ]
 
 _TITLE_REGEXES = [
     re.compile(r"^[a-z]+(?: [a-z]+)? [/&] [a-z]+(?: [a-z]+)? (?:sync|touchbase|touch base|weekly|bi.weekly|1:1)", re.I),
+    re.compile(r"\b(?:UA|AA|DL|WN|AS|B6|NK)\s*\d{3,4}\b", re.I),
 ]
 
 

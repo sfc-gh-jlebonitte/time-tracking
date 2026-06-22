@@ -433,6 +433,44 @@ def _render(
 # Main
 # ---------------------------------------------------------------------------
 
+_ACCOUNT_ALIASES: dict[str, str] = {
+    "ssga":            "State Street",
+    "ssim":            "State Street",
+    "state street global advisors": "State Street",
+    "capone":          "Capital One",
+    "cap one":         "Capital One",
+    "illumina":        "Illumina, Inc",
+    "bdl":             "NielsenIQ",
+    "nielseniq":       "NielsenIQ",
+    "omc":             "Old Mutual Capital",
+    "lululemon":       "Lululemon",
+    "uhg":             "Optum",
+    "unitedhealth":    "Optum",
+    "jpmc":            "JPMorgan",
+    "jpmorgan chase":  "JPMorgan",
+    "jpm":             "JPMorgan",
+    "bofa":            "Bank of America",
+    "bac":             "Bank of America",
+    "gs":              "Goldman Sachs",
+    "ms":              "Morgan Stanley",
+    "ge":              "General Electric",
+    "att":             "AT&T",
+}
+
+# Pinned account IDs — bypass DIM_USE_CASE lookup for accounts with multiple
+# SF records where we know exactly which one we work with.
+# Key: lowercase company name (after alias resolution), Value: (account_id, account_name)
+_PINNED_ACCOUNTS: dict[str, tuple[str, str]] = {
+    "capital one":          ("0013100001bmAI7AAM", "Capital One Services, LLC"),
+    "state street":         ("0013100001qwK6gAAE", "State Street Corporation"),
+    "edwards lifesciences": ("0013100001p349cAAA", "Edwards Lifesciences LLC"),
+    "abbvie":               ("0010Z00001tG2qeQAC", "Allergan"),
+    "nielseniq":            ("001i000001OKhD6AAL", "NielsenIQ"),
+    "lululemon":            ("0013100001qwBb0AAE", "Lululemon USA INC"),
+    "optum":                ("0013r00002XXvEhAAL", "Optum (UHG)"),
+}
+
+
 def _resolve_missing_account_ids(con, items: list, se_name: str) -> None:
     to_resolve = [
         it for it in items
@@ -457,15 +495,22 @@ def _resolve_missing_account_ids(con, items: list, se_name: str) -> None:
     params = [text for _, text in rows]
     prompt_prefix = (
         "For each meeting below, identify the CUSTOMER COMPANY NAME. "
-        "Use the full company name (not domain, not abbreviation, not Snowflake). "
+        "IMPORTANT: The meeting TITLE is the strongest signal — if the title names a company, use that. "
+        "Attendee domains are secondary and should only be used when the title is ambiguous. "
+        "Use the full company name (not domain, not abbreviation, not Snowflake, not a person's name). "
         "Output a JSON array of strings in the same order. Use null if Snowflake-internal or unknown.\n\n"
         "Examples:\n"
         '- "CapOne Weekly Call | domains: capitalone.com" → "Capital One"\n'
         '- "DoorDash Sync | domains: doordash.com" → "DoorDash"\n'
         '- "SSIM PoC | domains: ssga.com, statestreet.com" → "State Street"\n'
+        '- "SSGA Review | domains: statestreet.com" → "State Street"\n'
         '- "Lululemon SWAT | domains: lululemon.com" → "Lululemon"\n'
         '- "Weekly meeting with AWS | domains: abbvie.com, amazon.com" → "AbbVie"\n'
         '- "BDL Snowflake | domains: nielseniq.com" → "NielsenIQ"\n'
+        '- "Summit Dinner <>Edwards Lifesciences<> | domains: dbtlabs.com, edwards.com" → "Edwards Lifesciences"\n'
+        '- "UHG CEC Briefing | domains: optum.com" → "Optum"\n'
+        '- "Daily Sync - Snowflake X lululemon | domains: lululemon.com" → "Lululemon"\n'
+        '- "John Smith - 1 Hour Meeting | domains: snowflake.com" → null\n'
         '- "Internal team meeting | domains: none" → null\n\n'
         "Meetings:\n" + "\n".join(f'{i}: "{text}"' for i, text in rows) + "\n\n"
         "Reply with ONLY the JSON array:"
@@ -493,6 +538,19 @@ def _resolve_missing_account_ids(con, items: list, se_name: str) -> None:
             log.info("  AI extracted %d company names: %s", sum(1 for n in company_names if n), [n for n in company_names if n])
     except Exception as e:
         log.warning("AI company name extraction failed: %s", e)
+
+    # Apply known aliases before account map lookup
+    company_names = [_ACCOUNT_ALIASES.get(n.lower(), n) if n else n for n in company_names]
+
+    # Apply pinned accounts — assign known SF IDs directly, skip DIM_USE_CASE lookup
+    for i, it in enumerate(to_resolve):
+        name = company_names[i]
+        if name and name.lower() in _PINNED_ACCOUNTS:
+            acct_id, acct_name = _PINNED_ACCOUNTS[name.lower()]
+            it.sf_account_id = acct_id
+            if it.customer == "(unknown customer)":
+                it.customer = acct_name
+            log.debug("  Pinned %r → %s (%s)", it.title[:50], acct_name, acct_id)
 
     # Step 2: batch lookup extracted names against DIM_USE_CASE
     names_to_lookup = {n for n in company_names if n}
@@ -545,18 +603,51 @@ def _resolve_missing_account_ids(con, items: list, se_name: str) -> None:
         return
 
     # Step 3: look up via Jim's historical SE activities in Salesforce
-    # Build search terms: AI-extracted names + significant title words for nulls
-    history_terms: dict[str, list] = {}  # search_pattern -> [MeetingItem, ...]
+    # Build search terms: AI-extracted names + significant title phrases for nulls
+    _HISTORY_STOPWORDS = {
+        "snowflake", "with", "from", "internal", "weekly", "sync", "meeting",
+        "call", "update", "review", "session", "strategy", "request", "invitation",
+        "interoperability", "platform", "workshop", "enablement", "follow", "recap",
+        "databricks", "office", "hours", "team", "check", "planning", "discussion",
+        "intro", "demo", "kickoff", "standup", "touchbase", "touch", "base",
+        "monday", "tuesday", "wednesday", "thursday", "friday", "next", "steps",
+    }
+
+    history_terms: dict[str, list] = {}   # search_pattern -> [MeetingItem, ...]
+    # Track which patterns came from keyword fallback (vs AI name) for match strictness
+    keyword_patterns: set[str] = set()
+
     for it in still_unresolved:
         idx = to_resolve.index(it)
         name = company_names[idx]
         if name:
             history_terms.setdefault(f"%{name}%", []).append(it)
         else:
-            # Fall back to title keywords for meetings AI couldn't name
-            for word in _re.findall(r"[A-Z][a-zA-Z]{3,}", it.title or ""):
-                if word.lower() not in {"snowflake", "with", "from", "internal", "weekly", "sync", "meeting", "call"}:
-                    history_terms.setdefault(f"%{word}%", []).append(it)
+            # Extract consecutive-capitalized phrases (e.g. "Energy Transfer", "State Street")
+            # rather than individual words to avoid false matches
+            words = _re.findall(r"[A-Z][a-zA-Z]{2,}", it.title or "")
+            phrases: list[str] = []
+            i = 0
+            while i < len(words):
+                # Greedily build a phrase of consecutive capitalised words
+                phrase_words = [words[i]]
+                j = i + 1
+                while j < len(words) and words[j][0].isupper():
+                    phrase_words.append(words[j])
+                    j += 1
+                phrase = " ".join(phrase_words)
+                # Use phrase if multi-word, or single word that is long and not a stopword
+                if len(phrase_words) >= 2:
+                    clean = phrase.strip()
+                    if not all(w.lower() in _HISTORY_STOPWORDS for w in phrase_words):
+                        pat = f"%{clean}%"
+                        history_terms.setdefault(pat, []).append(it)
+                        keyword_patterns.add(pat)
+                elif len(phrase_words) == 1 and len(words[i]) >= 6 and words[i].lower() not in _HISTORY_STOPWORDS:
+                    pat = f"%{words[i]}%"
+                    history_terms.setdefault(pat, []).append(it)
+                    keyword_patterns.add(pat)
+                i = j if j > i + 1 else i + 1
 
     if history_terms:
         log.info("  Checking DIM_SE_ACTIVITY history for %d patterns...", len(history_terms))
@@ -586,19 +677,25 @@ def _resolve_missing_account_ids(con, items: list, se_name: str) -> None:
                     latest_opp_nm = str(r[5] or "").strip() or None
                     for pattern, matched_items in history_terms.items():
                         term = pattern.strip("%").lower()
-                        if term in acct_name.lower() or term in act_desc.lower():
-                            for it in matched_items:
-                                if not it.sf_account_id:
-                                    it.sf_account_id = acct_id
-                                    if it.customer == "(unknown customer)":
-                                        it.customer = acct_name
-                                    if latest_uc_id and not it.sf_use_case_id:
-                                        it.sf_use_case_id = latest_uc_id
-                                    if latest_opp_id and not it.sf_opp_id:
-                                        it.sf_opp_id = latest_opp_id
-                                    if latest_opp_nm and not it.opp:
-                                        it.opp = latest_opp_nm
-                                    log.info("  History resolved %r → %s | UC=%s Opp=%s", it.title[:40], acct_name, latest_uc_id or "—", latest_opp_id or "—")
+                        in_name = term in acct_name.lower()
+                        in_desc = term in act_desc.lower()
+                        # Keyword fallback patterns: only trust ACCOUNT_NAME matches
+                        # (description matches are too loose for generic words/phrases)
+                        if pattern in keyword_patterns:
+                            if not in_name:
+                                continue
+                        else:
+                            if not (in_name or in_desc):
+                                continue
+                        for it in matched_items:
+                            if not it.sf_account_id:
+                                it.sf_account_id = acct_id
+                                if it.customer == "(unknown customer)":
+                                    it.customer = acct_name
+                                # Do NOT populate use case/opp from keyword history —
+                                # these are unreliable cross-account matches.
+                                # Use case will be resolved via USE_CASE_ATTRIBUTION instead.
+                                log.info("  History resolved %r → %s", it.title[:40], acct_name)
         except Exception as e:
             log.warning("Historical activity lookup failed: %s", e)
     sf_emails = {
@@ -694,23 +791,31 @@ def _ai_classify_meetings(con, items: list) -> None:
     log.info("  AI filtered %d non-customer meetings", marked)
 
 
-def _fetch_tmr_ae_info(con, account_ids: set[str]) -> dict[str, dict]:
+def _fetch_tmr_ae_info(con, account_ids: set[str], se_user_id: str | None = None) -> dict[str, dict]:
     if not account_ids:
         return {}
     ids = list(account_ids)
     placeholders = ",".join(["%s"] * len(ids))
+
+    attribution_join = (
+        f"JOIN SALES.SE_REPORTING.USE_CASE_ATTRIBUTION a ON a.USE_CASE_ID = d.USE_CASE_ID AND a.USER_ID = '{se_user_id}'"
+        if se_user_id else ""
+    )
 
     uc_by_account: dict[str, dict] = {}
     try:
         with con.cursor() as cur:
             cur.execute(
                 f"""
-                SELECT ACCOUNT_ID, USE_CASE_ID, USE_CASE_NAME, USE_CASE_STAGE,
-                       STAGE_NUMBER, USE_CASE_EACV, USE_CASE_LEAD_SE_NAME, ACCOUNT_OWNER_NAME
-                FROM MDM.MDM_INTERFACES.DIM_USE_CASE
-                WHERE ACCOUNT_ID IN ({placeholders})
-                  AND IS_LOST = FALSE AND STAGE_NUMBER BETWEEN 1 AND 6
-                ORDER BY ACCOUNT_ID, STAGE_NUMBER DESC NULLS LAST, USE_CASE_EACV DESC NULLS LAST
+                SELECT d.ACCOUNT_ID, d.USE_CASE_ID, d.USE_CASE_NAME, d.USE_CASE_STAGE,
+                       d.STAGE_NUMBER, d.USE_CASE_EACV, d.USE_CASE_LEAD_SE_NAME, d.ACCOUNT_OWNER_NAME
+                FROM MDM.MDM_INTERFACES.DIM_USE_CASE d
+                {attribution_join}
+                WHERE d.ACCOUNT_ID IN ({placeholders})
+                  AND d.IS_LOST = FALSE AND d.IS_TECH_WON = FALSE
+                  AND d.IS_WON = FALSE AND d.IS_DEPLOYED = FALSE
+                  AND d.STAGE_NUMBER BETWEEN 1 AND 5
+                ORDER BY d.ACCOUNT_ID, d.STAGE_NUMBER DESC NULLS LAST, d.USE_CASE_EACV DESC NULLS LAST
                 """,
                 ids,
             )
@@ -774,6 +879,9 @@ def main() -> int:
         se_name = " ".join(p.capitalize() for p in local.split("."))  # "John Doe"
         print(f"  Using derived SE name: {se_name!r}")
         print(f"  If you see no Gong summaries, your Gong display name may differ.")
+
+    # Resolve the SE's Salesforce User ID for USE_CASE_ATTRIBUTION lookup
+    _SE_USER_ID: str | None = _opt_env("SNOWFLAKE_SE_USER_ID")
         print(f"  Check a Gong recording to see your exact name, then add to .secrets/snowhouse.env:")
         print(f"    SNOWFLAKE_SE_NAME=Your Gong Name")
     else:
@@ -1043,7 +1151,7 @@ def main() -> int:
             if account_ids:
                 log.info("Pass 3: use case / AE lookup for %d accounts...", len(account_ids))
                 _t = _time.monotonic()
-                tmr_ae = _fetch_tmr_ae_info(con_gsheet, account_ids)
+                tmr_ae = _fetch_tmr_ae_info(con_gsheet, account_ids, se_user_id=_SE_USER_ID)
                 log.info("Use case / AE lookup done in %.1fs", _time.monotonic() - _t)
 
         def _has_external_attendee(it: MeetingItem) -> bool:
@@ -1062,7 +1170,7 @@ def main() -> int:
                 "sf_activity_id": it.sf_activity_id or "",
                 "opp": it.opp or "",
                 "sf_opp_id": it.sf_opp_id or "",
-                "sf_use_case_id": it.sf_use_case_id or "",
+                "sf_use_case_id": (it.sf_use_case_id if it.sf_activity_id else "") or "",
                 "use_cases": it.use_cases or [],
                 "summary": it.summary or "",
                 "next_steps": it.next_steps or "",
